@@ -19,16 +19,9 @@ class TestMergeSettings:
     def test_empty_existing_uses_template(self):
         """Empty existing dict should use template values."""
         existing = {}
-        template = {"model": "sonnet", "alwaysThinkingEnabled": True}
+        template = {"alwaysThinkingEnabled": True}
         result = merge_settings(existing, template)
         assert result == template
-
-    def test_direct_override_model(self):
-        """model key should be overridden by template."""
-        existing = {"model": "opus"}
-        template = {"model": "sonnet"}
-        result = merge_settings(existing, template)
-        assert result["model"] == "sonnet"
 
     def test_direct_override_always_thinking(self):
         """alwaysThinkingEnabled should be overridden by template."""
@@ -141,12 +134,12 @@ class TestMergeSettings:
             "customKey": "custom_value",
             "anotherKey": {"nested": "data"},
         }
-        template = {"model": "sonnet"}
+        template = {"alwaysThinkingEnabled": True}
         result = merge_settings(existing, template)
 
         assert result["customKey"] == "custom_value"
         assert result["anotherKey"] == {"nested": "data"}
-        assert result["model"] == "sonnet"
+        assert result["alwaysThinkingEnabled"] is True
 
     def test_empty_permissions_handling(self):
         """Handle empty permissions gracefully."""
@@ -179,7 +172,6 @@ class TestMergeSettings:
     def test_all_overrides_together(self):
         """Test all direct overrides work together."""
         existing = {
-            "model": "opus",
             "alwaysThinkingEnabled": False,
             "hooks": {"old": "hook"},
             "statusLine": {"type": "old"},
@@ -187,7 +179,6 @@ class TestMergeSettings:
             "customKey": "preserved",
         }
         template = {
-            "model": "sonnet",
             "alwaysThinkingEnabled": True,
             "hooks": {"new": "hook"},
             "statusLine": {"type": "new"},
@@ -196,7 +187,6 @@ class TestMergeSettings:
         result = merge_settings(existing, template)
 
         # All should be overridden with template values
-        assert result["model"] == "sonnet"
         assert result["alwaysThinkingEnabled"] is True
         assert result["hooks"] == {"new": "hook"}
         assert result["statusLine"] == {"type": "new"}
@@ -211,7 +201,7 @@ class TestSetupSettings:
     def test_atomic_write_creates_new_file(self, tmp_path, mock_console):
         """Should create new settings file atomically."""
         settings_path = tmp_path / "settings.json"
-        template = {"model": "sonnet"}
+        template = {"alwaysThinkingEnabled": True}
 
         success, status, backup = setup_settings(
             template, settings_path, console=mock_console
@@ -222,14 +212,14 @@ class TestSetupSettings:
         assert settings_path.exists()
 
         content = json.loads(settings_path.read_text())
-        assert content["model"] == "sonnet"
+        assert content["alwaysThinkingEnabled"] is True
 
     def test_backup_created_before_update(self, tmp_path, mock_console):
         """Should create backup before updating existing file."""
         settings_path = tmp_path / "settings.json"
         settings_path.write_text('{"old": "data"}')
 
-        template = {"model": "sonnet"}
+        template = {"alwaysThinkingEnabled": True}
         success, status, backup = setup_settings(
             template, settings_path, console=mock_console
         )
@@ -242,25 +232,25 @@ class TestSetupSettings:
     def test_merges_with_existing(self, tmp_path, mock_console):
         """Should merge template with existing settings."""
         settings_path = tmp_path / "settings.json"
-        settings_path.write_text('{"customKey": "preserved", "model": "opus"}')
+        settings_path.write_text('{"customKey": "preserved", "alwaysThinkingEnabled": false}')
 
-        template = {"model": "sonnet", "alwaysThinkingEnabled": True}
+        template = {"alwaysThinkingEnabled": True, "hooks": {"new": "hook"}}
         success, status, backup = setup_settings(
             template, settings_path, console=mock_console
         )
 
         assert success
         content = json.loads(settings_path.read_text())
-        assert content["model"] == "sonnet"  # Template wins
+        assert content["alwaysThinkingEnabled"] is True  # Template wins
         assert content["customKey"] == "preserved"  # Existing preserved
-        assert content["alwaysThinkingEnabled"] is True
+        assert content["hooks"] == {"new": "hook"}
 
     def test_invalid_json_in_existing(self, tmp_path, mock_console):
         """Should handle invalid JSON in existing file."""
         settings_path = tmp_path / "settings.json"
         settings_path.write_text("invalid json {")
 
-        template = {"model": "sonnet"}
+        template = {"alwaysThinkingEnabled": True}
         success, status, backup = setup_settings(
             template, settings_path, console=mock_console
         )
@@ -271,7 +261,7 @@ class TestSetupSettings:
     def test_dry_run_no_changes(self, tmp_path, mock_console):
         """Dry run should not make any changes."""
         settings_path = tmp_path / "settings.json"
-        template = {"model": "sonnet"}
+        template = {"alwaysThinkingEnabled": True}
 
         success, status, backup = setup_settings(
             template, settings_path, dry_run=True, console=mock_console
@@ -285,7 +275,7 @@ class TestSetupSettings:
     def test_creates_parent_directory(self, tmp_path, mock_console):
         """Should create parent directories if they don't exist."""
         settings_path = tmp_path / "subdir" / "settings.json"
-        template = {"model": "sonnet"}
+        template = {"alwaysThinkingEnabled": True}
 
         success, status, backup = setup_settings(
             template, settings_path, console=mock_console
@@ -298,7 +288,7 @@ class TestSetupSettings:
     def test_trailing_newline_added(self, tmp_path, mock_console):
         """Should add trailing newline to JSON file."""
         settings_path = tmp_path / "settings.json"
-        template = {"model": "sonnet"}
+        template = {"alwaysThinkingEnabled": True}
 
         success, status, backup = setup_settings(
             template, settings_path, console=mock_console
