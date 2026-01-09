@@ -38,6 +38,9 @@ EXIT_MISSING_PREREQ = 2
 EXIT_PLUGIN_FAILED = 3
 EXIT_SKILL_FAILED = 4
 EXIT_SETTINGS_FAILED = 5
+EXIT_EXPORT_FAILED = 6
+EXIT_SYNC_FAILED = 7
+EXIT_DRIFT_DETECTED = 8
 
 # Global state for tracking partial completion on interrupt
 _completed_steps: list[str] = []
@@ -96,6 +99,58 @@ PLUGINS = [
 
 # Directory containing skill files to install
 SKILLS_DIR = Path(__file__).parent / "skills"
+
+# Directory containing external config files
+CONFIG_DIR = Path(__file__).parent / "config"
+
+
+def load_settings_template() -> dict:
+    """Load settings template from external config or fall back to embedded default."""
+    config_path = CONFIG_DIR / "settings.json"
+    if config_path.exists():
+        try:
+            with open(config_path, 'r') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            pass
+    # Fall back to embedded default
+    return SETTINGS_TEMPLATE
+
+
+def load_plugins_config() -> list[tuple[str, str, str]]:
+    """Load plugins config from external file or fall back to embedded default.
+
+    Returns list of (plugin_name, marketplace, repo) tuples.
+    """
+    config_path = CONFIG_DIR / "plugins.json"
+    if config_path.exists():
+        try:
+            with open(config_path, 'r') as f:
+                data = json.load(f)
+                return [
+                    (p["name"], p["marketplace"], p["repo"])
+                    for p in data.get("plugins", [])
+                ]
+        except (json.JSONDecodeError, IOError, KeyError):
+            pass
+    # Fall back to embedded default
+    return PLUGINS
+
+
+def load_enabled_plugins() -> dict[str, bool]:
+    """Load enabled plugins state from external config."""
+    config_path = CONFIG_DIR / "plugins.json"
+    if config_path.exists():
+        try:
+            with open(config_path, 'r') as f:
+                data = json.load(f)
+                return {
+                    f"{p['name']}@{p['marketplace']}": p.get("enabled", True)
+                    for p in data.get("plugins", [])
+                }
+        except (json.JSONDecodeError, IOError, KeyError):
+            pass
+    return {}
 
 # Settings.json template with full configuration
 SETTINGS_TEMPLATE = {
@@ -235,6 +290,51 @@ class SetupResult:
         }
 
 
+@dataclass
+class DiffResult:
+    """Result of comparing project config with installed config."""
+    added: list[str] = field(default_factory=list)      # New in installed
+    removed: list[str] = field(default_factory=list)    # Missing from installed
+    modified: list[str] = field(default_factory=list)   # Different values
+    unchanged: list[str] = field(default_factory=list)  # Same values
+
+    @property
+    def has_drift(self) -> bool:
+        """Check if there are any differences."""
+        return bool(self.added or self.removed or self.modified)
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON output."""
+        return {
+            "added": self.added,
+            "removed": self.removed,
+            "modified": self.modified,
+            "unchanged": self.unchanged,
+            "has_drift": self.has_drift,
+        }
+
+
+@dataclass
+class ExportResult:
+    """Result of export operation."""
+    settings_exported: bool = False
+    skills_exported: list[str] = field(default_factory=list)
+    plugins_exported: bool = False
+    backups: list[str] = field(default_factory=list)
+    exit_code: int = EXIT_SUCCESS
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON output."""
+        return {
+            "success": self.exit_code == EXIT_SUCCESS,
+            "exit_code": self.exit_code,
+            "settings_exported": self.settings_exported,
+            "skills_exported": self.skills_exported,
+            "plugins_exported": self.plugins_exported,
+            "backups": self.backups,
+        }
+
+
 def handle_interrupt(signum: int, frame) -> None:
     """Handle Ctrl-C gracefully."""
     err_console = create_error_console()
@@ -331,9 +431,12 @@ def setup_plugins(
     global _completed_steps
     results: dict[str, str] = {}
 
+    # Load plugins from external config or fallback
+    plugins = load_plugins_config()
+
     # Get unique marketplaces
     marketplaces = {}
-    for plugin, marketplace, repo in PLUGINS:
+    for plugin, marketplace, repo in plugins:
         if marketplace not in marketplaces:
             marketplaces[marketplace] = repo
 
@@ -354,7 +457,7 @@ def setup_plugins(
     if console and not quiet:
         console.print("\n[bold]Installing plugins...[/bold]")
 
-    for plugin, marketplace, _ in PLUGINS:
+    for plugin, marketplace, _ in plugins:
         if console and not quiet:
             with console.status(f"Installing {plugin}..."):
                 success, _ = install_plugin(plugin, marketplace, dry_run, verbose, console if verbose else None)
@@ -494,6 +597,261 @@ def merge_settings(existing: dict, template: dict) -> dict:
     return result
 
 
+def diff_settings(project_config: dict, installed_config: dict) -> DiffResult:
+    """Compare project config with installed ~/.claude/settings.json.
+
+    Returns a DiffResult showing what's different between them.
+    """
+    result = DiffResult()
+
+    # Keys to compare
+    all_keys = set(project_config.keys()) | set(installed_config.keys())
+
+    for key in all_keys:
+        proj_val = project_config.get(key)
+        inst_val = installed_config.get(key)
+
+        if key not in project_config:
+            result.added.append(f"settings.{key}")
+        elif key not in installed_config:
+            result.removed.append(f"settings.{key}")
+        elif proj_val != inst_val:
+            result.modified.append(f"settings.{key}")
+        else:
+            result.unchanged.append(f"settings.{key}")
+
+    return result
+
+
+def diff_skills(project_skills_dir: Path, installed_skills_dir: Path) -> DiffResult:
+    """Compare skills directories.
+
+    Returns a DiffResult showing new/modified/deleted skills.
+    """
+    result = DiffResult()
+
+    project_skills = set()
+    installed_skills = set()
+
+    if project_skills_dir.exists():
+        project_skills = {d.name for d in project_skills_dir.iterdir() if d.is_dir()}
+    if installed_skills_dir.exists():
+        installed_skills = {d.name for d in installed_skills_dir.iterdir() if d.is_dir()}
+
+    # New skills (in installed but not in project)
+    for skill in installed_skills - project_skills:
+        result.added.append(f"skill:{skill}")
+
+    # Removed skills (in project but not in installed)
+    for skill in project_skills - installed_skills:
+        result.removed.append(f"skill:{skill}")
+
+    # Check for modified skills (exist in both)
+    for skill in project_skills & installed_skills:
+        proj_path = project_skills_dir / skill
+        inst_path = installed_skills_dir / skill
+
+        # Simple modification check: compare file counts and main skill file
+        proj_files = list(proj_path.rglob("*"))
+        inst_files = list(inst_path.rglob("*"))
+
+        if len(proj_files) != len(inst_files):
+            result.modified.append(f"skill:{skill}")
+        else:
+            # Check if main skill file differs
+            skill_file_names = ["skill.md", "SKILL.md"]
+            modified = False
+            for fname in skill_file_names:
+                proj_file = proj_path / fname
+                inst_file = inst_path / fname
+                if proj_file.exists() and inst_file.exists():
+                    if proj_file.read_text() != inst_file.read_text():
+                        modified = True
+                        break
+            if modified:
+                result.modified.append(f"skill:{skill}")
+            else:
+                result.unchanged.append(f"skill:{skill}")
+
+    return result
+
+
+def export_settings(
+    installed_path: Path,
+    project_path: Path,
+    dry_run: bool = False,
+    console: Console | None = None,
+) -> tuple[bool, Path | None]:
+    """Export settings from ~/.claude/settings.json to config/settings.json.
+
+    Returns (success, backup_path).
+    """
+    if not installed_path.exists():
+        if console:
+            console.print(f"  [yellow]No installed settings found at {installed_path}[/yellow]")
+        return False, None
+
+    try:
+        with open(installed_path, 'r') as f:
+            installed = json.load(f)
+    except (json.JSONDecodeError, IOError) as e:
+        if console:
+            console.print(f"  [red]Failed to read installed settings:[/red] {e}")
+        return False, None
+
+    if dry_run:
+        if console:
+            console.print(f"  [dim]Would export settings to {project_path}[/dim]")
+        return True, None
+
+    # Create backup of project config
+    backup_path = None
+    if project_path.exists():
+        backup_path = backup_file(project_path, console)
+        if backup_path is None:
+            return False, None
+
+    # Write exported settings
+    try:
+        project_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = project_path.with_suffix(".tmp")
+        with open(temp_path, 'w') as f:
+            json.dump(installed, f, indent=2)
+            f.write('\n')
+        temp_path.replace(project_path)
+        if console:
+            console.print(f"  [green]Exported settings to {project_path}[/green]")
+        return True, backup_path
+    except Exception as e:
+        if console:
+            console.print(f"  [red]Failed to write:[/red] {e}")
+        if backup_path and backup_path.exists():
+            shutil.copy2(backup_path, project_path)
+        return False, backup_path
+
+
+def export_skills(
+    installed_dir: Path,
+    project_dir: Path,
+    dry_run: bool = False,
+    console: Console | None = None,
+) -> list[str]:
+    """Export new skills from ~/.claude/skills/ to project skills directory.
+
+    Returns list of exported skill names.
+    """
+    exported = []
+
+    if not installed_dir.exists():
+        if console:
+            console.print(f"  [yellow]No installed skills directory at {installed_dir}[/yellow]")
+        return exported
+
+    project_skills = set()
+    if project_dir.exists():
+        project_skills = {d.name for d in project_dir.iterdir() if d.is_dir()}
+
+    for skill_path in installed_dir.iterdir():
+        if not skill_path.is_dir():
+            continue
+
+        skill_name = skill_path.name
+        dest_path = project_dir / skill_name
+
+        # Only export skills that don't exist in project
+        if skill_name in project_skills:
+            continue
+
+        if dry_run:
+            if console:
+                console.print(f"  [dim]Would export skill:[/dim] {skill_name}")
+            exported.append(skill_name)
+            continue
+
+        try:
+            project_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(skill_path, dest_path)
+            exported.append(skill_name)
+            if console:
+                console.print(f"  [green]Exported skill:[/green] {skill_name}")
+        except Exception as e:
+            if console:
+                console.print(f"  [red]Failed to export {skill_name}:[/red] {e}")
+
+    return exported
+
+
+def export_plugins_state(
+    installed_settings: dict,
+    project_plugins_path: Path,
+    dry_run: bool = False,
+    console: Console | None = None,
+) -> tuple[bool, Path | None]:
+    """Export enabled/disabled plugin states from installed settings to project plugins.json.
+
+    Returns (success, backup_path).
+    """
+    installed_enabled = installed_settings.get("enabledPlugins", {})
+    if not installed_enabled:
+        if console:
+            console.print("  [dim]No enabledPlugins in installed settings[/dim]")
+        return True, None
+
+    # Read existing plugins config
+    if not project_plugins_path.exists():
+        if console:
+            console.print(f"  [yellow]No plugins config at {project_plugins_path}[/yellow]")
+        return False, None
+
+    try:
+        with open(project_plugins_path, 'r') as f:
+            plugins_data = json.load(f)
+    except (json.JSONDecodeError, IOError) as e:
+        if console:
+            console.print(f"  [red]Failed to read plugins config:[/red] {e}")
+        return False, None
+
+    # Update enabled states
+    updated = False
+    for plugin in plugins_data.get("plugins", []):
+        key = f"{plugin['name']}@{plugin['marketplace']}"
+        if key in installed_enabled:
+            new_state = installed_enabled[key]
+            if plugin.get("enabled") != new_state:
+                plugin["enabled"] = new_state
+                updated = True
+
+    if not updated:
+        if console:
+            console.print("  [dim]No plugin state changes[/dim]")
+        return True, None
+
+    if dry_run:
+        if console:
+            console.print(f"  [dim]Would update plugin states in {project_plugins_path}[/dim]")
+        return True, None
+
+    # Create backup
+    backup_path = backup_file(project_plugins_path, console)
+
+    # Write updated config
+    try:
+        temp_path = project_plugins_path.with_suffix(".tmp")
+        with open(temp_path, 'w') as f:
+            json.dump(plugins_data, f, indent=2)
+            f.write('\n')
+        temp_path.replace(project_plugins_path)
+        if console:
+            console.print(f"  [green]Updated plugin states in {project_plugins_path}[/green]")
+        return True, backup_path
+    except Exception as e:
+        if console:
+            console.print(f"  [red]Failed to write:[/red] {e}")
+        if backup_path and backup_path.exists():
+            shutil.copy2(backup_path, project_plugins_path)
+        return False, backup_path
+
+
 def setup_settings(
     template: dict,
     settings_path: Path,
@@ -626,6 +984,199 @@ def print_summary(
         console.print(f"  4. Backups saved: {', '.join(result.backups)}")
 
 
+def run_status(
+    console: Console,
+    err_console: Console,
+    quiet: bool = False,
+    json_output: bool = False,
+) -> int:
+    """Show differences between project config and installed config."""
+    installed_settings_path = Path.home() / ".claude" / "settings.json"
+    installed_skills_path = Path.home() / ".claude" / "skills"
+    project_settings_path = CONFIG_DIR / "settings.json"
+
+    # Load configs
+    project_config = load_settings_template()
+    installed_config = {}
+    if installed_settings_path.exists():
+        try:
+            with open(installed_settings_path, 'r') as f:
+                installed_config = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            pass
+
+    # Diff settings
+    settings_diff = diff_settings(project_config, installed_config)
+
+    # Diff skills
+    skills_diff = diff_skills(SKILLS_DIR, installed_skills_path)
+
+    # Combine results
+    combined = DiffResult(
+        added=settings_diff.added + skills_diff.added,
+        removed=settings_diff.removed + skills_diff.removed,
+        modified=settings_diff.modified + skills_diff.modified,
+        unchanged=settings_diff.unchanged + skills_diff.unchanged,
+    )
+
+    if json_output:
+        print(json.dumps({
+            "settings": settings_diff.to_dict(),
+            "skills": skills_diff.to_dict(),
+            "combined": combined.to_dict(),
+        }, indent=2))
+        return EXIT_DRIFT_DETECTED if combined.has_drift else EXIT_SUCCESS
+
+    if not quiet:
+        console.print("\n[bold]Configuration Status[/bold]")
+        console.print(f"  Project config: {project_settings_path}")
+        console.print(f"  Installed config: {installed_settings_path}\n")
+
+        if not combined.has_drift:
+            console.print("[green]No drift detected - configurations are in sync[/green]")
+            return EXIT_SUCCESS
+
+        table = Table(title="Drift Report")
+        table.add_column("Type", style="cyan")
+        table.add_column("Item")
+        table.add_column("Status")
+
+        for item in combined.added:
+            table.add_row("Added", item, "[yellow]In installed, not in project[/yellow]")
+        for item in combined.removed:
+            table.add_row("Removed", item, "[red]In project, not in installed[/red]")
+        for item in combined.modified:
+            table.add_row("Modified", item, "[blue]Values differ[/blue]")
+
+        console.print(table)
+        console.print(f"\n[yellow]Drift detected: {len(combined.added)} added, "
+                     f"{len(combined.removed)} removed, {len(combined.modified)} modified[/yellow]")
+
+    return EXIT_DRIFT_DETECTED if combined.has_drift else EXIT_SUCCESS
+
+
+def run_export(
+    console: Console,
+    err_console: Console,
+    dry_run: bool = False,
+    diff_only: bool = False,
+    quiet: bool = False,
+    json_output: bool = False,
+) -> int:
+    """Export changes from ~/.claude/ back to project config."""
+    result = ExportResult()
+
+    installed_settings_path = Path.home() / ".claude" / "settings.json"
+    installed_skills_path = Path.home() / ".claude" / "skills"
+    project_settings_path = CONFIG_DIR / "settings.json"
+    project_plugins_path = CONFIG_DIR / "plugins.json"
+
+    if not quiet and not json_output:
+        console.print("\n[bold]Exporting configuration from ~/.claude/[/bold]")
+        if dry_run:
+            console.print("[yellow]DRY RUN - No changes will be made[/yellow]\n")
+        if diff_only:
+            console.print("[cyan]DIFF ONLY - Showing changes without applying[/cyan]\n")
+
+    # Show diff if requested
+    if diff_only:
+        return run_status(console, err_console, quiet, json_output)
+
+    # Export settings
+    if not quiet and not json_output:
+        console.print("\n[bold]Exporting settings...[/bold]")
+    success, backup_path = export_settings(
+        installed_settings_path,
+        project_settings_path,
+        dry_run,
+        console if not quiet and not json_output else None,
+    )
+    result.settings_exported = success
+    if backup_path:
+        result.backups.append(str(backup_path))
+
+    # Export new skills
+    if not quiet and not json_output:
+        console.print("\n[bold]Exporting skills...[/bold]")
+    exported_skills = export_skills(
+        installed_skills_path,
+        SKILLS_DIR,
+        dry_run,
+        console if not quiet and not json_output else None,
+    )
+    result.skills_exported = exported_skills
+
+    # Export plugin states
+    if not quiet and not json_output:
+        console.print("\n[bold]Exporting plugin states...[/bold]")
+
+    installed_settings = {}
+    if installed_settings_path.exists():
+        try:
+            with open(installed_settings_path, 'r') as f:
+                installed_settings = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            pass
+
+    plugin_success, plugin_backup = export_plugins_state(
+        installed_settings,
+        project_plugins_path,
+        dry_run,
+        console if not quiet and not json_output else None,
+    )
+    result.plugins_exported = plugin_success
+    if plugin_backup:
+        result.backups.append(str(plugin_backup))
+
+    # Determine exit code
+    if not result.settings_exported:
+        result.exit_code = EXIT_EXPORT_FAILED
+
+    if json_output:
+        print(json.dumps(result.to_dict(), indent=2))
+    elif not quiet and not dry_run:
+        console.print("\n[green bold]Export completed![/green bold]")
+        if result.backups:
+            console.print(f"[dim]Backups: {', '.join(result.backups)}[/dim]")
+
+    return result.exit_code
+
+
+def run_sync(
+    args,
+    console: Console,
+    err_console: Console,
+    quiet: bool = False,
+    json_output: bool = False,
+) -> int:
+    """Bidirectional sync: export then setup."""
+    if not quiet and not json_output:
+        console.print("\n[bold]Bidirectional Sync[/bold]")
+        console.print("Step 1: Exporting changes from ~/.claude/ to project...")
+
+    # Run export first
+    export_result = run_export(
+        console,
+        err_console,
+        dry_run=args.dry_run,
+        diff_only=False,
+        quiet=quiet,
+        json_output=False,  # We'll output combined JSON at the end
+    )
+
+    if export_result != EXIT_SUCCESS and export_result != EXIT_DRIFT_DETECTED:
+        if not quiet and not json_output:
+            err_console.print("[red]Export failed, aborting sync[/red]")
+        return EXIT_SYNC_FAILED
+
+    if not quiet and not json_output:
+        console.print("\nStep 2: Pushing project config to ~/.claude/...")
+
+    # The rest of the setup will happen in main()
+    # Return a special code to indicate we should continue with setup
+    return EXIT_SUCCESS
+
+
 def main() -> int:
     # Set up signal handler for Ctrl-C
     signal.signal(signal.SIGINT, handle_interrupt)
@@ -638,10 +1189,16 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  uv run ~/setup-claude-code.py              # Run full setup
-  uv run ~/setup-claude-code.py --dry-run    # Preview changes
-  uv run ~/setup-claude-code.py --json       # Output results as JSON
-  uv run ~/setup-claude-code.py --skip-plugins  # Only install skills
+  uv run setup_claude_code.py              # Run full setup
+  uv run setup_claude_code.py --dry-run    # Preview changes
+  uv run setup_claude_code.py --json       # Output results as JSON
+  uv run setup_claude_code.py --skip-plugins  # Only install skills
+
+Sync commands:
+  uv run setup_claude_code.py --status     # Show drift between project and installed
+  uv run setup_claude_code.py --export     # Pull changes from ~/.claude/ to project
+  uv run setup_claude_code.py --export --diff  # Show diff only
+  uv run setup_claude_code.py --sync       # Bidirectional: export then setup
 
 Environment variables:
   NO_COLOR=1              Disable colored output
@@ -695,6 +1252,31 @@ For issues: https://github.com/anthropics/claude-code/issues
         action="store_true",
         help="Output results as JSON (implies --quiet)",
     )
+    parser.add_argument(
+        "--status",
+        action="store_true",
+        help="Show differences between project config and installed config",
+    )
+    parser.add_argument(
+        "--export",
+        action="store_true",
+        help="Export changes from ~/.claude/ back to project config",
+    )
+    parser.add_argument(
+        "--sync",
+        action="store_true",
+        help="Bidirectional sync: export changes then push configuration",
+    )
+    parser.add_argument(
+        "--diff",
+        action="store_true",
+        help="Show diff only without making changes (use with --export)",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Auto-accept all changes without prompting",
+    )
 
     args = parser.parse_args()
 
@@ -704,6 +1286,27 @@ For issues: https://github.com/anthropics/claude-code/issues
     # Create consoles
     console = create_console(force_no_color=args.no_color, quiet=quiet)
     err_console = create_error_console(force_no_color=args.no_color)
+
+    # Handle --status command
+    if args.status:
+        return run_status(console, err_console, quiet, args.json)
+
+    # Handle --export command
+    if args.export:
+        return run_export(
+            console, err_console,
+            dry_run=args.dry_run,
+            diff_only=args.diff,
+            quiet=quiet,
+            json_output=args.json,
+        )
+
+    # Handle --sync command (export first, then continue with setup)
+    if args.sync:
+        sync_result = run_sync(args, console, err_console, quiet, args.json)
+        if sync_result != EXIT_SUCCESS:
+            return sync_result
+        # Continue with normal setup below
 
     result = SetupResult()
 
@@ -749,8 +1352,13 @@ For issues: https://github.com/anthropics/claude-code/issues
     # Setup settings.json
     if not args.skip_settings:
         settings_path = Path.home() / ".claude" / "settings.json"
+        settings_template = load_settings_template()
+        # Merge with enabled plugins from external config
+        enabled_plugins = load_enabled_plugins()
+        if enabled_plugins:
+            settings_template["enabledPlugins"] = enabled_plugins
         success, status, backup_path = setup_settings(
-            SETTINGS_TEMPLATE,
+            settings_template,
             settings_path,
             args.dry_run,
             args.verbose,

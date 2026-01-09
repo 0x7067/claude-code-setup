@@ -13,7 +13,7 @@ This repository contains `setup_claude_code.py`, a Python script that automates 
 The script is designed to be run with `uv`:
 
 ```bash
-# Full setup
+# Full setup (push config to ~/.claude/)
 uv run setup_claude_code.py
 
 # Preview changes without making them
@@ -27,6 +27,32 @@ uv run setup_claude_code.py --skip-plugins
 uv run setup_claude_code.py --skip-skills
 uv run setup_claude_code.py --skip-settings
 ```
+
+## Sync Commands
+
+The script supports bidirectional sync between the project config and your installed Claude Code configuration:
+
+```bash
+# Show drift between project config and installed config
+uv run setup_claude_code.py --status
+
+# Export changes from ~/.claude/ back to project config
+uv run setup_claude_code.py --export
+
+# Show diff only (without making changes)
+uv run setup_claude_code.py --export --diff
+
+# Bidirectional sync: export changes then push config
+uv run setup_claude_code.py --sync
+```
+
+### Periodic Sync Workflow
+
+To keep your project in sync with manual changes made to Claude Code:
+
+1. **Check for drift**: `uv run setup_claude_code.py --status`
+2. **Pull changes**: `uv run setup_claude_code.py --export` (creates backups automatically)
+3. **Commit changes**: Review and commit the updated config files
 
 ## Development
 
@@ -66,8 +92,11 @@ open htmlcov/index.html  # macOS
 
 Tests are organized by functionality:
 - `test_command.py` - Command execution
+- `test_config_loading.py` - External config file loading
 - `test_console.py` - Console output and color handling
+- `test_diff.py` - Diff/status functionality
 - `test_exit_codes.py` - Exit code validation
+- `test_export.py` - Export functionality
 - `test_file_operations.py` - File backup and atomic writes
 - `test_main.py` - CLI argument parsing and main flow
 - `test_plugins.py` - Plugin installation
@@ -77,22 +106,44 @@ Tests are organized by functionality:
 
 ## Architecture
 
+### Project Structure
+
+```
+claude-code-setup/
+├── config/
+│   ├── settings.json       # Settings template (externalized)
+│   └── plugins.json        # Plugins list with enabled state
+├── skills/
+│   ├── design-principles/  # Skill directories
+│   └── swift-concurrency/
+├── tests/                  # Unit tests
+├── setup_claude_code.py    # Main script
+└── CLAUDE.md
+```
+
 ### Script Structure
 
 The script is organized into several key components:
 
-1. **Configuration Data** (lines 84-448):
-   - `PLUGINS`: List of tuples defining (plugin_name, marketplace, github_repo)
-   - `DESIGN_PRINCIPLES_SKILL`: Multi-line string containing the design-principles skill content
-   - `SETTINGS_TEMPLATE`: Dictionary with complete Claude Code settings configuration
+1. **External Configuration** (`config/` directory):
+   - `config/settings.json`: Settings template (loaded by `load_settings_template()`)
+   - `config/plugins.json`: Plugin list with enabled states (loaded by `load_plugins_config()`)
+   - Falls back to embedded defaults if config files are missing
 
 2. **Core Functions**:
-   - `setup_plugins()`: Installs plugins from configured marketplaces (lines 555-609)
-   - `setup_skills()`: Creates skill files in `~/.claude/skills/` (lines 612-653)
-   - `setup_settings()`: Merges and updates `~/.claude/settings.json` (lines 718-788)
-   - `merge_settings()`: Intelligent merging strategy for settings (lines 675-715)
+   - `setup_plugins()`: Installs plugins from configured marketplaces
+   - `setup_skills()`: Creates skill files in `~/.claude/skills/`
+   - `setup_settings()`: Merges and updates `~/.claude/settings.json`
+   - `merge_settings()`: Intelligent merging strategy for settings
 
-3. **CLI & Output**:
+3. **Sync Functions**:
+   - `diff_settings()`: Compares project config with installed config
+   - `diff_skills()`: Compares skill directories
+   - `export_settings()`: Exports installed settings to project config
+   - `export_skills()`: Exports new installed skills to project
+   - `export_plugins_state()`: Updates plugin enabled states from installed
+
+4. **CLI & Output**:
    - Uses `rich` library for formatted console output
    - Supports `--no-color` and respects `NO_COLOR` environment variable
    - JSON output mode for programmatic usage
@@ -123,6 +174,9 @@ EXIT_MISSING_PREREQ = 2
 EXIT_PLUGIN_FAILED = 3
 EXIT_SKILL_FAILED = 4
 EXIT_SETTINGS_FAILED = 5
+EXIT_EXPORT_FAILED = 6
+EXIT_SYNC_FAILED = 7
+EXIT_DRIFT_DETECTED = 8  # Returned by --status when drift found
 ```
 
 ### Error Handling
@@ -161,29 +215,39 @@ And denies access to sensitive files:
 - `.envrc`, `./secrets/**`
 - AWS, SSH, Kubernetes, npm, and netrc credentials
 
-## Modifying the Script
+## Modifying Configuration
 
 ### Adding New Plugins
 
-Add to the `PLUGINS` list (line 84):
-```python
-PLUGINS = [
-    # ...existing plugins...
-    ("plugin-name", "marketplace-name", "github-org/repo-name"),
-]
+Edit `config/plugins.json` to add a new plugin:
+```json
+{
+  "plugins": [
+    ...existing plugins...
+    {
+      "name": "plugin-name",
+      "marketplace": "marketplace-name",
+      "repo": "github-org/repo-name",
+      "enabled": true
+    }
+  ]
+}
 ```
-
-Also update `SETTINGS_TEMPLATE["enabledPlugins"]` to enable/disable by default.
 
 ### Adding New Skills
 
-1. Define the skill content as a multi-line string constant
-2. Add setup logic to `setup_skills()` function
-3. Create the skill file in `~/.claude/skills/<skill-name>/skill.md`
+Create a new directory in `skills/`:
+```
+skills/
+└── my-new-skill/
+    └── skill.md
+```
+
+The skill will be automatically installed to `~/.claude/skills/my-new-skill/`.
 
 ### Modifying Settings Template
 
-Update the `SETTINGS_TEMPLATE` dictionary (lines 336-448). Changes will be merged intelligently with existing settings.
+Edit `config/settings.json` directly. Changes will be merged intelligently with existing settings when running setup.
 
 ## Important Implementation Details
 

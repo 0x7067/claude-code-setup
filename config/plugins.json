@@ -1,0 +1,64 @@
+{
+  "plugins": [
+    {
+      "name": "claude-mem",
+      "marketplace": "thedotmack",
+      "repo": "thedotmack/claude-mem",
+      "enabled": true
+    },
+    {
+      "name": "plannotator",
+      "marketplace": "plannotator",
+      "repo": "backnotprop/plannotator",
+      "enabled": true
+    },
+    {
+      "name": "ac-dev-tools",
+      "marketplace": "alteredcraft-plugins",
+      "repo": "AlteredCraft/claude-code-plugins",
+      "enabled": true
+    },
+    {
+      "name": "ac-ideation",
+      "marketplace": "alteredcraft-plugins",
+      "repo": "AlteredCraft/claude-code-plugins",
+      "enabled": true
+    },
+    {
+      "name": "claude-hud",
+      "marketplace": "claude-hud",
+      "repo": "jarrodwatts/claude-hud",
+      "enabled": true
+    },
+    {
+      "name": "code-review",
+      "marketplace": "claude-plugins-official",
+      "repo": "anthropics/claude-plugins-official",
+      "enabled": true
+    },
+    {
+      "name": "commit-commands",
+      "marketplace": "claude-plugins-official",
+      "repo": "anthropics/claude-plugins-official",
+      "enabled": true
+    },
+    {
+      "name": "feature-dev",
+      "marketplace": "claude-plugins-official",
+      "repo": "anthropics/claude-plugins-official",
+      "enabled": true
+    },
+    {
+      "name": "swift-lsp",
+      "marketplace": "claude-plugins-official",
+      "repo": "anthropics/claude-plugins-official",
+      "enabled": true
+    },
+    {
+      "name": "mgrep",
+      "marketplace": "Mixedbread-Grep",
+      "repo": "mixedbread-ai/mgrep",
+      "enabled": false
+    }
+  ]
+}
