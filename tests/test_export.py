@@ -200,6 +200,52 @@ class TestExportPluginsState:
         assert success
         assert plugins_path.read_text() == original
 
+    def test_disables_plugin_missing_from_installed(self, tmp_path):
+        """Should mark plugin as disabled when absent from enabledPlugins."""
+        plugins_path = tmp_path / "plugins.json"
+        plugins_path.write_text(json.dumps({
+            "plugins": [
+                {"name": "plugin1", "marketplace": "mp1", "enabled": True},
+                {"name": "plugin2", "marketplace": "mp2", "enabled": True},
+            ]
+        }))
+
+        installed_settings = {
+            "enabledPlugins": {
+                "plugin1@mp1": True,
+                # plugin2 is missing - should be marked as disabled
+            }
+        }
+
+        success, backup = export_plugins_state(installed_settings, plugins_path)
+
+        assert success
+        assert backup is not None  # Changes made
+        updated = json.loads(plugins_path.read_text())
+        plugins = {p["name"]: p for p in updated["plugins"]}
+        assert plugins["plugin1"]["enabled"] is True
+        assert plugins["plugin2"]["enabled"] is False
+
+    def test_preserves_already_disabled_plugins(self, tmp_path):
+        """Should not update plugins already marked as disabled."""
+        plugins_path = tmp_path / "plugins.json"
+        plugins_path.write_text(json.dumps({
+            "plugins": [
+                {"name": "plugin1", "marketplace": "mp1", "enabled": False},
+            ]
+        }))
+
+        installed_settings = {
+            "enabledPlugins": {}  # Empty - plugin1 not present
+        }
+
+        success, backup = export_plugins_state(installed_settings, plugins_path)
+
+        assert success
+        assert backup is None  # No changes needed
+        updated = json.loads(plugins_path.read_text())
+        assert updated["plugins"][0]["enabled"] is False
+
 
 class TestExportResult:
     """Tests for ExportResult dataclass."""

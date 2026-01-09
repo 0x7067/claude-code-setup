@@ -816,10 +816,24 @@ def export_plugins_state(
     for plugin in plugins_data.get("plugins", []):
         key = f"{plugin['name']}@{plugin['marketplace']}"
         if key in installed_enabled:
+            # Plugin exists in both - compare states
             new_state = installed_enabled[key]
             if plugin.get("enabled") != new_state:
                 plugin["enabled"] = new_state
                 updated = True
+        else:
+            # Plugin in config but not in installed - treat as disabled
+            if plugin.get("enabled") is True:
+                plugin["enabled"] = False
+                updated = True
+
+    # Check for plugins in installed but not in config
+    config_keys = {f"{p['name']}@{p['marketplace']}" for p in plugins_data.get("plugins", [])}
+    new_plugins = [k for k in installed_enabled.keys() if k not in config_keys]
+    if new_plugins and console:
+        console.print(f"  [yellow]New plugins found in installed settings (not in config):[/yellow]")
+        for p in new_plugins:
+            console.print(f"    - {p}")
 
     if not updated:
         if console:

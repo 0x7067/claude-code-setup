@@ -4,13 +4,13 @@
       "name": "claude-mem",
       "marketplace": "thedotmack",
       "repo": "thedotmack/claude-mem",
-      "enabled": false
+      "enabled": true
     },
     {
       "name": "plannotator",
       "marketplace": "plannotator",
       "repo": "backnotprop/plannotator",
-      "enabled": false
+      "enabled": true
     },
     {
       "name": "ac-dev-tools",

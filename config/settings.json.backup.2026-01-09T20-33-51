@@ -94,6 +94,7 @@
     "command": "bash -c '\"$(command -v bun || command -v node)\" \"$(ls -td ~/.claude/plugins/cache/claude-hud/claude-hud/*/ 2>/dev/null | head -1)src/index.ts\"'"
   },
   "enabledPlugins": {
+    "plannotator@plannotator": true,
     "ac-dev-tools@alteredcraft-plugins": true,
     "ac-ideation@alteredcraft-plugins": true,
     "claude-hud@claude-hud": true,
@@ -101,7 +102,7 @@
     "commit-commands@claude-plugins-official": true,
     "feature-dev@claude-plugins-official": true,
     "swift-lsp@claude-plugins-official": true,
-    "ac-artifact-workflow@alteredcraft-plugins": true
+    "mgrep@Mixedbread-Grep": false
   },
   "alwaysThinkingEnabled": true,
   "mcpServers": {
