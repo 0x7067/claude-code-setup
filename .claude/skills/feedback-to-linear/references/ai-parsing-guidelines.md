@@ -84,6 +84,8 @@ User reported: "App crashes when uploading images over 10MB on iPhone 14"
 - Issue occurs specifically with large images (>10MB)
 - Crash happens during upload process
 
+**Complexity Estimate:** M (Medium)
+
 ## Acceptance Criteria
 - [ ] Large images (>10MB) upload without crashing
 - [ ] User receives clear feedback during upload
@@ -162,7 +164,7 @@ If no label achieves >70% confidence:
 - **0**: No priority (default)
 - **1**: Urgent
 - **2**: High
-- **3**: Normal
+- **3**: Medium
 - **4**: Low
 
 ### Detection Rules
@@ -188,7 +190,7 @@ If no label achieves >70% confidence:
 
 **Example:** "Login doesn't work for new users - blocking onboarding"
 
-#### Priority 3 (Normal)
+#### Priority 3 (Medium)
 **Keywords:** should, would be good, normal, standard, regular
 
 **Context signals:**
@@ -254,8 +256,13 @@ When no clear urgency signals are present, default to 0 (No priority).
 
 **Feedback:** "App crashes when uploading large images"
 
-**Acceptance Criteria:**
+**Description with AC:**
 ```markdown
+User reported: "App crashes when uploading large images"
+
+**Complexity Estimate:** M (Medium)
+
+## Acceptance Criteria
 - [ ] Users can upload images >10MB without crashes
 - [ ] Progress indicator shows during upload
 - [ ] Clear error message if upload fails
@@ -265,8 +272,13 @@ When no clear urgency signals are present, default to 0 (No priority).
 
 **Feedback:** "Add dark mode"
 
-**Acceptance Criteria:**
+**Description with AC:**
 ```markdown
+User requested: "Add dark mode"
+
+**Complexity Estimate:** L (Large)
+
+## Acceptance Criteria
 - [ ] Dark mode toggle available in settings
 - [ ] All screens support dark mode
 - [ ] Mode preference persists across sessions
@@ -277,6 +289,8 @@ When no clear urgency signals are present, default to 0 (No priority).
 ---
 
 ## 6. Estimate Inference
+
+**Note:** Estimates are appended to the issue description as a note (e.g., "**Complexity Estimate:** M (Medium)"). They are NOT passed to the Linear API as a parameter, since Linear uses project-specific point systems rather than T-shirt sizes.
 
 ### T-Shirt Sizes
 - **XS**: Trivial change, <1 hour
@@ -435,7 +449,6 @@ Team: Mobile
 Project: Bug Fixes
 Labels: [Bug, iOS]
 Priority: 1 (Urgent)
-Estimate: M
 
 Description: |
   User reported: "The app crashes every time I try to upload a video on my iPhone 14. This is super urgent as I can't use the app at all!"
@@ -444,6 +457,8 @@ Description: |
   - Device: iPhone 14
   - Issue: Consistent crash during video upload
   - Impact: User cannot use app (critical functionality blocked)
+
+  **Complexity Estimate:** M (Medium)
 
   ## Acceptance Criteria
   - [ ] Video uploads work without crashes on iPhone 14
@@ -639,3 +654,400 @@ Final output format for Linear API:
 **Empty or missing titles:**
 - Auto-generate based on URL type
 - Fallback to "Attachment" or URL filename
+
+---
+
+## 9. Confidence Scoring
+
+### Overview
+
+Assign a confidence level (HIGH/MEDIUM/LOW) to each parsed field to indicate parsing quality and help users identify items needing review.
+
+### Confidence Levels
+
+| Field | HIGH | MEDIUM | LOW |
+|-------|------|--------|-----|
+| **Title** | Clear action verb + specific issue | Transformed from description | Very vague, generic |
+| **Labels** | Exact keyword match | Semantic similarity | Weak inference |
+| **Priority** | Explicit urgency keyword | Contextual signals | Defaulted to 0 |
+| **Estimate** | N/A | Always MEDIUM (heuristic) | N/A |
+
+### Detailed Criteria
+
+#### Title Confidence
+
+**HIGH Confidence:**
+- Feedback contains clear action: "Fix crash on login"
+- Imperative verb present: fix, add, improve, update
+- Specific and unambiguous
+- Example: "The login button is broken" → "Fix broken login button" (HIGH)
+
+**MEDIUM Confidence:**
+- Requires significant transformation
+- Some ambiguity but main action is clear
+- Example: "Users can't seem to log in sometimes" → "Fix intermittent login failures" (MEDIUM)
+
+**LOW Confidence:**
+- Very vague feedback: "This is broken", "Doesn't work"
+- No clear action or subject
+- Multiple possible interpretations
+- Example: "The app isn't great" → "Improve app [?]" (LOW)
+- Add `[?]` suffix to LOW confidence titles
+
+#### Label Confidence
+
+**HIGH Confidence:**
+- Exact keyword match in feedback
+- Example: Feedback contains "crash" → "Bug" label (HIGH)
+- Example: Feedback contains "add dark mode" → "Feature" label (HIGH)
+
+**MEDIUM Confidence:**
+- Semantic similarity to label
+- Inferred from context
+- Example: "doesn't work properly" → "Bug" label (MEDIUM)
+- Example: "would love to see" → "Feature" label (MEDIUM)
+
+**LOW Confidence:**
+- Weak or uncertain match
+- No clear type indicators
+- Example: "Make it better" → uncertain type (LOW)
+- Consider leaving labels empty if <50% confident
+
+#### Priority Confidence
+
+**HIGH Confidence:**
+- Explicit urgency keyword present
+- Keywords: crash, urgent, ASAP, critical, important, minor
+- Example: "URGENT: Users can't log in!" → Priority 1 (HIGH)
+
+**MEDIUM Confidence:**
+- Contextual urgency signals
+- All caps text, multiple exclamation marks
+- Business impact implied
+- Example: "Login not working for many users" → Priority 2 (MEDIUM)
+
+**LOW Confidence:**
+- No urgency indicators
+- Defaulted to Priority 0
+- Example: "Would be nice to have dark mode" → Priority 0 (LOW)
+
+#### Estimate Confidence
+
+All estimates are **MEDIUM** confidence since they're heuristic-based rather than explicitly stated.
+
+### Confidence Output Format
+
+When parsing, store confidence for each field:
+
+```json
+{
+  "title": "Fix crash when uploading images",
+  "title_confidence": "HIGH",
+  "labels": ["Bug", "iOS"],
+  "labels_confidence": "HIGH",
+  "priority": 1,
+  "priority_confidence": "HIGH",
+  "estimate": "M",
+  "estimate_confidence": "MEDIUM"
+}
+```
+
+### Preview Table Format
+
+Display confidence in preview:
+
+```
+| Title                    | Labels      | Pri | Est | Confidence |
+|--------------------------|-------------|-----|-----|------------|
+| Fix crash on upload      | Bug, iOS    | 1   | M   | HIGH       |
+| Improve settings [?]     | Enhancement | 0   | M   | LOW ⚠️     |
+| Add dark mode            | Feature     | 2   | L   | HIGH       |
+```
+
+- Show overall confidence (lowest among all fields)
+- Add warning icon (⚠️) for LOW confidence items
+- Prompt user to review LOW confidence items before creation
+
+### User Communication
+
+When presenting LOW confidence items:
+- "These 2 items have LOW confidence and may need review"
+- Highlight them in the preview table
+- Suggest editing before creation
+
+---
+
+## 10. Repo Context Integration
+
+### Overview
+
+When the user opts in to using repository context (runs the skill from a project directory and answers "Yes"), enrich issue descriptions with project information and file path links.
+
+### Context Detection
+
+Early in Phase 1, ask: "Use context from current repository?"
+
+If **Yes**, detect:
+
+#### Project Identity
+
+**Sources (in priority order):**
+1. `package.json` → `name` field (Node.js/JavaScript)
+2. `Cargo.toml` → `[package] name` (Rust)
+3. `pyproject.toml` → `[project] name` (Python)
+4. `composer.json` → `name` field (PHP)
+5. `go.mod` → module path (Go)
+6. Git remote URL: `git config --get remote.origin.url`
+7. Directory name as fallback
+
+**Example Outputs:**
+- `@company/mobile-app`
+- `my-rust-project`
+- `github.com/user/repo`
+
+#### Platform Detection
+
+**Detection Rules:**
+
+| Check | Platform |
+|-------|----------|
+| `package.json` contains `"react-native"` | Mobile (iOS + Android) |
+| `ios/` directory OR `*.xcodeproj` exists | iOS |
+| `android/` directory OR `build.gradle` exists | Android |
+| `package.json` contains `next`, `vite`, `react`, `vue` | Web |
+| `Cargo.toml`, `go.mod`, `requirements.txt` exists | Backend/API |
+
+**Multi-Platform:**
+- If both `ios/` and `android/` exist → Mobile
+- If `package.json` has react-native → Mobile
+- Otherwise, detect all applicable platforms
+
+#### Repository URL
+
+**Extract from:**
+```bash
+git config --get remote.origin.url
+```
+
+**Formats:**
+- GitHub: `https://github.com/user/repo`
+- GitLab: `https://gitlab.com/user/repo`
+- SSH: Convert `git@github.com:user/repo.git` → `https://github.com/user/repo`
+
+### Context Usage
+
+#### 1. Pre-fill Platform Selection
+
+In Phase 1 when asking "What platform(s) does this feedback relate to?":
+- If single platform detected → Set as default selection
+- If multiple platforms → Suggest "Multiple/All platforms"
+- User can still override
+
+**Example:**
+```
+Detected platform: iOS
+
+Question: "What platform(s) does this feedback relate to?"
+Options:
+  • iOS ← (suggested based on repo)
+  • Android
+  • Web
+  • Backend/API
+  • Multiple/All platforms
+```
+
+#### 2. Highlight Matching Linear Project
+
+In Phase 1 when listing Linear projects:
+- Compare project names to detected repo name
+- Fuzzy match (case-insensitive, ignore special chars)
+- Highlight matching project
+
+**Example:**
+```
+Detected repo: @company/mobile-app
+
+Which project should these issues go to?
+  • mobile-app ← (matches repo name)
+  • web-dashboard
+  • backend-api
+  • None/Backlog
+```
+
+#### 3. Enrich Descriptions
+
+Add repo info to the Context section:
+
+```markdown
+## Context
+[Inferred context from feedback]
+
+**Source repo:** @company/mobile-app (https://github.com/company/mobile-app)
+```
+
+**Format:**
+- Project name on same line as repo URL if available
+- Only project name if no URL detected
+
+**Examples:**
+
+With URL:
+```markdown
+**Source repo:** my-project (https://github.com/user/my-project)
+```
+
+Without URL:
+```markdown
+**Source repo:** my-local-project
+```
+
+#### 4. File Path Detection and Linking
+
+**Detection:**
+Scan feedback text for file path patterns:
+- Relative paths: `src/components/Header.tsx`
+- Absolute paths: `/app/src/main.rs`
+- Common patterns: `*.js`, `*.ts`, `*.swift`, `*.kt`, `*.py`, `*.rs`
+
+**Validation:**
+- Check if file exists in current directory
+- Skip non-existent paths
+
+**Link Generation:**
+
+If repo URL is available, generate GitHub/GitLab links:
+
+**GitHub:**
+```
+https://github.com/{owner}/{repo}/blob/main/{file_path}
+```
+
+**GitLab:**
+```
+https://gitlab.com/{owner}/{repo}/-/blob/main/{file_path}
+```
+
+**Add to description:**
+```markdown
+## Links
+- [Screenshot](https://d.pr/abc)
+- [src/components/Header.tsx](https://github.com/user/repo/blob/main/src/components/Header.tsx)
+- [app/src/main.rs](https://github.com/user/repo/blob/main/app/src/main.rs)
+```
+
+If no URL (local-only repo):
+```markdown
+## Links
+- `src/components/Header.tsx` (local file)
+```
+
+### Examples
+
+#### Example 1: iOS Project with File Paths
+
+**Detected Context:**
+- Project: `@company/ios-app`
+- Platform: iOS
+- URL: `https://github.com/company/ios-app`
+
+**Feedback:**
+```
+The app crashes in ProfileViewController.swift when tapping the logout button
+```
+
+**Description:**
+```markdown
+User reported: "The app crashes in ProfileViewController.swift when tapping the logout button"
+
+## Context
+- Platform: iOS
+- File mentioned: ProfileViewController.swift
+
+**Source repo:** @company/ios-app (https://github.com/company/ios-app)
+
+**Complexity Estimate:** M (Medium)
+
+## Links
+- [ProfileViewController.swift](https://github.com/company/ios-app/blob/main/ProfileViewController.swift)
+
+## Acceptance Criteria
+- [ ] Fix crash in ProfileViewController logout action
+- [ ] Add error handling for logout process
+- [ ] Test on iOS 15+
+```
+
+#### Example 2: Web Project, No URL
+
+**Detected Context:**
+- Project: `my-web-app`
+- Platform: Web
+- URL: None (local repo)
+
+**Feedback:**
+```
+The header component in src/Header.tsx is misaligned on mobile
+```
+
+**Description:**
+```markdown
+User reported: "The header component in src/Header.tsx is misaligned on mobile"
+
+## Context
+- Platform: Web
+- File mentioned: src/Header.tsx
+
+**Source repo:** my-web-app
+
+**Complexity Estimate:** S (Small)
+
+## Links
+- `src/Header.tsx` (local file)
+
+## Acceptance Criteria
+- [ ] Fix header alignment on mobile screens
+- [ ] Test responsive design (320px - 768px)
+- [ ] Verify cross-browser compatibility
+```
+
+#### Example 3: Backend Project, Platform Pre-fill
+
+**Detected Context:**
+- Project: `api-server`
+- Platform: Backend/API
+- URL: `https://github.com/company/api-server`
+
+**Workflow:**
+1. User runs skill from `/projects/api-server`
+2. Skill asks: "Use context from current repository?" → User: "Yes"
+3. Detects: Rust project (Cargo.toml), Backend platform
+4. Phase 1 platform question → Backend/API pre-selected
+5. Phase 1 project question → "api-server" highlighted (if exists in Linear)
+
+### Edge Cases
+
+**No Git Repo:**
+- Skip repo context detection entirely
+- Don't ask "Use context from current repository?"
+- Proceed normally
+
+**Invalid File Paths:**
+- If mentioned path doesn't exist, don't create link
+- Note in description: `src/missing.tsx` (file not found)
+
+**Multiple Projects in Mono-repo:**
+- Use root package name or directory name
+- User can manually edit during preview if needed
+
+**Private Repos:**
+- Generate links normally
+- Linear users will need repo access to view
+
+### Benefits
+
+✅ **Faster workflow** - Pre-filled platform and project selections
+✅ **Better traceability** - Direct links from issues to source code
+✅ **Context preservation** - Repo name helps future maintainers
+✅ **File validation** - Catches typos in file paths
+✅ **Team alignment** - Everyone knows which codebase the issue relates to
+
+
