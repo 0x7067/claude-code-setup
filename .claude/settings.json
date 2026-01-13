@@ -1,0 +1,97 @@
+{
+  "env": {
+    "ENABLE_TOOL_SEARCH": "true",
+    "ENABLE_LSP_TOOL": "1",
+    "DISABLE_AUTOUPDATER": "1"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(awk)",
+      "Bash(basename)",
+      "Bash(grep)",
+      "Bash(actool:*)",
+      "Bash(cargo:*)",
+      "Bash(cat:*)",
+      "Bash(codesign:*)",
+      "Bash(docker-compose:*)",
+      "Bash(docker:*)",
+      "Bash(dsymutil:*)",
+      "Bash(echo:*)",
+      "Bash(find:*)",
+      "Bash(git add:*)",
+      "Bash(git branch:*)",
+      "Bash(git checkout:*)",
+      "Bash(git commit:*)",
+      "Bash(git diff:*)",
+      "Bash(git fetch:*)",
+      "Bash(git log:*)",
+      "Bash(git merge:*)",
+      "Bash(git pull:*)",
+      "Bash(git push:*)",
+      "Bash(git rebase:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(git rev-list:*)",
+      "Bash(git stash:*)",
+      "Bash(git status)",
+      "Bash(go:*)",
+      "Bash(head:*)",
+      "Bash(ibtool:*)",
+      "Bash(lipo:*)",
+      "Bash(ls:*)",
+      "Bash(make:*)",
+      "Bash(node:*)",
+      "Bash(npm install)",
+      "Bash(npm run:*)",
+      "Bash(npm test:*)",
+      "Bash(npx:*)",
+      "Bash(otool:*)",
+      "Bash(pip3:*)",
+      "Bash(pip:*)",
+      "Bash(plutil:*)",
+      "Bash(pnpm:*)",
+      "Bash(pwd)",
+      "Bash(python3:*)",
+      "Bash(python:*)",
+      "Bash(security:*)",
+      "Bash(swift build:*)",
+      "Bash(swift package:*)",
+      "Bash(swift run:*)",
+      "Bash(swift test:*)",
+      "Bash(swift:*)",
+      "Bash(swiftc:*)",
+      "Bash(tail:*)",
+      "Bash(wc:*)",
+      "Bash(which:*)",
+      "Bash(xcode-select:*)",
+      "Bash(xcodebuild:*)",
+      "Bash(xcrun simctl:*)",
+      "Bash(xcrun:*)",
+      "Bash(yarn:*)"
+    ],
+    "deny": [
+      "Read(./secrets/**)",
+      "Read(.env)",
+      "Read(.env.*)",
+      "Read(.envrc)",
+      "Read(~/.aws/**)",
+      "Read(~/.kube/**)",
+      "Read(~/.netrc)",
+      "Read(~/.npmrc)",
+      "Read(~/.ssh/**)"
+    ]
+  },
+  "model": "opusplan",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo \"For context, today's date is $(date). Please use this as the current date for all time-relative questions.\""
+          }
+        ]
+      }
+    ]
+  },
+  "alwaysThinkingEnabled": false
+}
