@@ -17,6 +17,7 @@
       "Bash(docker:*)",
       "Bash(dsymutil:*)",
       "Bash(echo:*)",
+      "Bash(fd:*)",
       "Bash(find:*)",
       "Bash(git add:*)",
       "Bash(git branch:*)",
@@ -52,6 +53,7 @@
       "Bash(pwd)",
       "Bash(python3:*)",
       "Bash(python:*)",
+      "Bash(rg:*)",
       "Bash(security:*)",
       "Bash(swift build:*)",
       "Bash(swift package:*)",
@@ -81,6 +83,8 @@
     ]
   },
   "model": "opusplan",
+  "defaultMode": "plan",
+  "alwaysThinkingEnabled": true,
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -92,6 +96,5 @@
         ]
       }
     ]
-  },
-  "alwaysThinkingEnabled": false
+  }
 }
