@@ -21,11 +21,11 @@ Activate this skill with any of these phrases:
 
 | Aspect | Details |
 |--------|---------|
-| **Input** | Raw feedback text (batch) + team/project selection + optional media URLs |
+| **Input** | Raw feedback text (batch) + team/project selection |
 | **Output** | Linear issues with AI-parsed metadata (title, labels, priority, acceptance criteria, estimates, links) |
 | **Workspace** | Uses workspace from configured Linear API key |
-| **Mode** | Batch processing with preview table before creation |
-| **Duration** | ~2-3 minutes for 5-10 feedback items |
+| **Mode** | Batch processing with conditional confirmation |
+| **Duration** | ~1-2 minutes for 5-10 feedback items |
 
 ## Agent Behavior Contract
 
@@ -33,67 +33,64 @@ When this skill is invoked, you MUST:
 
 1. **Never assume context** - Always fetch teams, projects, and labels dynamically from Linear
 2. **Single workspace** - Issues are created in the workspace associated with the Linear MCP plugin's API key
-3. **Preview before creating** - Show a formatted table of all parsed issues for user confirmation
+3. **Auto-detect repo context** - If in a git repo, automatically use project info (no prompt)
 4. **Use existing labels only** - Never create new labels; only match to fetched labels
 5. **Default to Backlog** - New issues start in "Backlog" or "Todo" state unless specified
 6. **Batch process** - Parse all feedback items together, then create all at once
 7. **Preserve user voice** - Keep original feedback wording in descriptions
+8. **Conditional confirmation** - Only prompt if LOW confidence items exist
 
 ## Process
 
 ### Phase 1: Input Collection
 
-**Objective:** Gather feedback, platform context, and determine target location in Linear.
+**Objective:** Gather feedback, detect context, and select target location in Linear.
 
 **Steps:**
-1. Prompt user for feedback text (support multi-line, multiple items)
-2. Check if current directory is a git repo (`git rev-parse --git-dir`)
-3. If in a git repo, use `AskUserQuestion` to ask:
-   - **Question**: "Use context from current repository?"
-   - **Options**:
-     - "Yes" (description: "Add project name, platform, and repo info to issues")
-     - "No" (description: "Create issues without repo context")
-4. If user selects "Yes":
-   - Detect project name from `package.json`, `Cargo.toml`, `pyproject.toml`, or git remote
-   - Detect platform from project structure (ios/, android/, package.json dependencies, etc.)
-   - Store repo context for later enrichment
-5. **CRITICAL**: Use `MCPSearch` tool to load each MCP tool BEFORE calling it. For example:
-   - Call `MCPSearch` with query `"select:mcp__plugin_linear_linear__list_teams"`
-   - Wait for it to return successfully
-   - Then call `mcp__plugin_linear_linear__list_teams`
-   - Repeat this pattern for ALL MCP tools: search first, then call
-6. Use `mcp__plugin_linear_linear__list_teams` to fetch available teams (after loading via MCPSearch)
-7. Use `AskUserQuestion` with 2 questions:
-   - **Team**: "Which team should these issues go to?"
-     - Present team names and descriptions
-     - If repo context detected, highlight matching team/project name
-     - Single selection required
-   - **Platform**: "What platform(s) does this feedback relate to?"
-     - Options: iOS, Android, Web, Backend/API, Multiple/All platforms
-     - If repo context detected platform, set as default selection
-     - Single selection
-8. Load and use `mcp__plugin_linear_linear__list_projects` (MCPSearch first, then call) filtered by selected team
-9. Load and use `mcp__plugin_linear_linear__list_issue_labels` (MCPSearch first, then call) for selected team
-10. Use `AskUserQuestion` with 2 questions:
-   - **Project**: "Which project should these issues go to? (optional)"
-     - Present project names
-     - If repo context detected, highlight matching project name
-     - Include "None/Backlog" option
-     - Single selection
-   - **Media**: "Any images, videos, or links to add?"
-     - Options:
-       - "No media" (description: Continue without attachments)
-       - "Add URLs" (description: Provide image/video/reference URLs)
-     - Single selection
-11. If "Add URLs" selected in step 10:
-   - Prompt for multiple URLs (one per line or comma-separated)
-   - For each URL, ask for optional title/description
-   - Support: screenshot URLs, video recordings, reference links
-12. Store available labels, platform context, and repo context for parsing
 
-**Inputs:** User feedback text, team selection, optional project, platform context, optional repo context
-**Outputs:** Validated team/project, platform context, available labels list, repo context (if enabled)
-**Verification:** Confirm team and project IDs are valid
+1. **Load all MCP tools upfront** (batch in parallel):
+   ```
+   MCPSearch("select:mcp__plugin_linear_linear__list_teams")
+   MCPSearch("select:mcp__plugin_linear_linear__list_projects")
+   MCPSearch("select:mcp__plugin_linear_linear__list_issue_labels")
+   MCPSearch("select:mcp__plugin_linear_linear__create_issue")
+   ```
+
+2. **Prompt user for feedback text** (support multi-line, multiple items, inline URLs)
+   - Users can include screenshot/video URLs directly in feedback
+   - URLs are auto-extracted during parsing
+
+3. **Auto-detect repo context** (no prompt):
+   - Check if current directory is a git repo (`git rev-parse --git-dir`)
+   - If yes, detect:
+     - Project name from `package.json`, `Cargo.toml`, `pyproject.toml`, or git remote
+     - Platform from project structure (ios/, android/, package.json dependencies, etc.)
+     - Repo URL from `git config --get remote.origin.url`
+   - Display detected context as informational message:
+     ```
+     Detected: [project-name] (iOS) - github.com/user/repo
+     ```
+
+4. **Fetch Linear data** (can run in parallel):
+   - `mcp__plugin_linear_linear__list_teams` to get available teams
+   - After team is known: fetch projects and labels for that team
+
+5. **Single combined question** using `AskUserQuestion` with 3 questions:
+   - **Team**: "Which team?" (required, single select)
+     - If repo name matches a team, note it
+   - **Platform**: "Platform?" (single select)
+     - Options: iOS, Android, Web, Backend/API, Multiple
+     - If detected from repo, set as default
+   - **Project**: "Project?" (optional, single select)
+     - Include "None/Backlog" option
+     - If repo name matches a project, highlight it
+
+6. **Fetch labels** for selected team:
+   - `mcp__plugin_linear_linear__list_issue_labels`
+
+**Inputs:** User feedback text
+**Outputs:** Validated team/project, platform context, available labels, repo context
+**Verification:** Team ID is valid, labels fetched successfully
 
 ---
 
@@ -102,81 +99,72 @@ When this skill is invoked, you MUST:
 **Objective:** Extract structured issue data from raw feedback using AI.
 
 **Steps:**
+
 1. Split feedback into individual items (by line breaks, blank lines, or numbered lists)
+
 2. For each feedback item, extract:
-   - **Title**: Imperative, actionable, <80 chars
+   - **Title**: Imperative, actionable, <80 chars, include specifics
    - **Description**: Original feedback + context + estimate note (markdown formatted)
-   - **Labels**: Semantically match to fetched labels (see guidelines below)
-   - **Priority**: 0-4 based on urgency signals (default: 0)
+   - **Labels**: Semantically match to fetched labels using compound signals
+   - **Priority**: 1-4 based on multi-signal inference (default: 3)
    - **Acceptance Criteria**: 3-5 testable items in markdown checklist format
-   - **Estimate**: XS/S/M/L/XL complexity (appended to description, not passed to API)
-   - **Confidence**: HIGH/MEDIUM/LOW for each field (see guidelines)
-   - **Links**: Extract and structure URLs (embedded in description markdown)
-     - Auto-detect http/https URLs in feedback text using regex patterns
-     - Identify URL type: image (.png, .jpg, .jpeg, .gif, .webp), video (.mp4, .mov, .avi, .loom.com, .vimeo.com, .youtube.com), screenshot service (d.pr, cloudapp, droplr, cl.ly), or reference
-     - Extract context around URLs for title generation (e.g., "screenshot showing crash", "video reproduction of bug")
-     - Merge with user-provided URLs from Phase 1 step 9
-     - For user-provided URLs: accept one URL per line or comma-separated, with optional title in parentheses or after a colon
-     - Remove duplicate URLs (case-insensitive URL comparison)
-     - Preserve user-provided titles over auto-generated ones
-     - Format as: `[{url: "https://...", title: "Description"}]`
+   - **Estimate**: XS/S/M/L/XL complexity (appended to description)
+   - **Confidence**: HIGH/MEDIUM/LOW for each field
+   - **Links**: Auto-extract URLs from feedback text
 
 **Label Matching Guidelines:**
-- Present AI with the list of available labels fetched in Phase 1
-- Match based on semantic similarity to label names
-- Common patterns:
-  - Bug-like: "crash", "error", "broken", "doesn't work" → match "Bug", "Defect", etc.
-  - Feature-like: "add", "new", "would love", "wish" → match "Feature", "Enhancement", etc.
-  - Improvement-like: "better", "improve", "slow", "optimize" → match "Improvement", "Performance", etc.
-  - Platform: "iOS", "Android", "mobile", "backend", "web" → match platform labels
-- If no confident match (>70% similarity), leave labels empty
+- Use compound signal detection (see parsing guidelines)
+- Consider label descriptions, not just names
+- Domain-aware: prioritize platform labels matching detected repo
+- Match based on >70% semantic confidence
+- Maximum 3-4 labels per issue
 
 **Title Convention:**
-- When platform is selected (not "Multiple/All platforms"), prefix title with `[Platform]`
-- Format: `[iOS] Fix crash when uploading images`
-- Multi-platform issues: No prefix, add platform labels instead
+- When platform is selected (not "Multiple"), prefix with `[Platform]`
+- Include specific details from feedback (device, size, action)
+- Avoid generic titles like "Fix bug" or "Add feature"
 - Examples:
-  - iOS selected → "[iOS] Add dark mode support"
-  - Android selected → "[Android] Fix navigation bug"
-  - Multiple/All → "Fix authentication issue" (no prefix)
+  - "[iOS] Fix crash when uploading large images on iPhone 14"
+  - "[Android] Add dark mode toggle in settings"
 
-**Priority Detection:**
-- Priority 1 (Urgent): "crash", "broken", "urgent", "ASAP", "critical", "down"
-- Priority 2 (High): "important", "soon", "blocking", "serious"
-- Priority 3 (Medium): "should", "would be nice"
-- Priority 4 (Low): "minor", "eventually", "nice to have"
-- Default: 0 (No priority)
+**Priority Detection (Multi-Signal):**
+- Base priority: 3 (Medium) - most feedback deserves attention
+- Adjust up/down based on signals:
+
+| Signal Type | +1 Priority | -1 Priority |
+|-------------|-------------|-------------|
+| User impact | "many users", "everyone", "all" | "sometimes", "rarely", "edge case" |
+| Business | "can't use", "blocking", "revenue" | "cosmetic", "minor", "nice to have" |
+| Severity | crash, data loss, security | typo, color, alignment |
+| Tone | ALL CAPS, !!!, frustrated | casual suggestion |
+
+- Priority 1 (Urgent): crash + many users, security, data loss
+- Priority 2 (High): blocking core flow, explicit urgency
+- Priority 3 (Medium): default, standard bugs/features
+- Priority 4 (Low): cosmetic, minor polish
 
 **Confidence Scoring:**
-Assign confidence level (HIGH/MEDIUM/LOW) for each parsed field:
 
 | Field | HIGH | MEDIUM | LOW |
 |-------|------|--------|-----|
-| Title | Clear action verb, specific issue | Transformed from vague description | Very vague, needs clarification |
-| Labels | Exact keyword match | Semantic match | Inferred/guessed |
-| Priority | Explicit keyword present | Contextual signals | Defaulted to 0 |
-| Estimate | - | All estimates (heuristic-based) | - |
+| Title | Clear action + specific issue | Transformed, some ambiguity | Vague, add `[?]` suffix |
+| Labels | Exact compound match | Semantic inference | Weak match |
+| Priority | Multiple strong signals | Some signals | Defaulted |
+| Estimate | - | Always MEDIUM | - |
 
-**Low Confidence Handling:**
-- Add `[?]` suffix to titles with LOW confidence
-- Flag items in preview for user review
-- Store confidence score for each field (used in preview table)
-
-**Description Format with Estimate:**
+**Description Format:**
 ```markdown
 [Original user feedback, quoted or paraphrased]
 
 ## Context
-[Any inferred or explicit context]
-[If repo context enabled: Source repo: {project_name} ({repo_url})]
+[Inferred context + device/platform details]
+[If repo detected: **Source repo:** project-name (repo-url)]
 
 **Complexity Estimate:** M (Medium)
 
 ## Links
-- [Screenshot showing crash](https://d.pr/abc123)
-- [Video reproduction](https://loom.com/share/xyz)
-[If file paths detected and repo context enabled:
-- [src/Header.tsx](https://github.com/user/repo/blob/main/src/Header.tsx)]
+- [Screenshot](https://d.pr/abc123)
+- [src/Component.tsx](https://github.com/user/repo/blob/main/src/Component.tsx)
 
 ## Acceptance Criteria
 - [ ] Criterion 1
@@ -184,9 +172,9 @@ Assign confidence level (HIGH/MEDIUM/LOW) for each parsed field:
 - [ ] Criterion 3
 ```
 
-**Inputs:** Feedback items, available labels, repo context (if enabled)
-**Outputs:** Structured issue data for each feedback item with confidence scores
-**Verification:** All items have title, description, valid labels, confidence scores
+**Inputs:** Feedback items, available labels, repo context
+**Outputs:** Structured issue data with confidence scores
+**Verification:** All items have title, description, valid labels
 
 ---
 
@@ -195,29 +183,36 @@ Assign confidence level (HIGH/MEDIUM/LOW) for each parsed field:
 **Objective:** Preview parsed issues and create them in Linear.
 
 **Steps:**
-1. Display preview table with columns: Title, Labels, Priority, Estimate, Confidence
-2. Show first 100 chars of description for each
-3. Highlight rows with LOW confidence (e.g., with a warning icon or note)
-4. Use `AskUserQuestion` to ask: "Create these N issues?"
-   - Options:
-     - "Yes, create all" (description: Creates all issues as shown)
-     - "Edit first" (description: Modify fields before creating)
-     - "Cancel" (description: Discard and start over)
-5. If "Yes, create all":
-   - Load `mcp__plugin_linear_linear__create_issue` via MCPSearch first
+
+1. **Display preview table:**
+   | Title | Labels | Pri | Est | Confidence |
+   |-------|--------|-----|-----|------------|
+   | [iOS] Fix crash on upload | Bug, iOS | 2 | M | HIGH |
+   | Improve settings [?] | Enhancement | 3 | M | LOW ⚠️ |
+
+2. **Conditional confirmation:**
+   - If ALL items have HIGH or MEDIUM confidence → **create immediately** (no prompt)
+   - If ANY item has LOW confidence → prompt with `AskUserQuestion`:
+     - "Create N issues? (X items flagged for review)"
+     - Options: "Create all", "Edit flagged items", "Cancel"
+
+3. **If editing:**
+   - Allow inline edits: "Change issue 2 title to: [new title]"
+   - Re-display preview after edits
+   - Then create
+
+4. **Create issues:**
    - For each parsed issue, call `mcp__plugin_linear_linear__create_issue`
    - Include: title, team, project (if set), labels, priority, description
-     - Description contains: context (including repo context if enabled), estimate note, links (markdown formatted), and acceptance criteria
-6. If "Edit first":
-   - Use `AskUserQuestion` to ask which field(s) to modify (Title, Labels, Priority, Description, Estimate)
-   - Re-parse with user adjustments
-   - Return to step 1 (preview)
-7. Collect created issue URLs
-8. Display summary table with issue identifiers and URLs
 
-**Inputs:** Parsed issue data, user confirmation
+5. **Display summary:**
+   | Issue | URL |
+   |-------|-----|
+   | MOB-123 | https://linear.app/team/issue/MOB-123 |
+
+**Inputs:** Parsed issue data, user confirmation (if needed)
 **Outputs:** Created Linear issues with URLs
-**Verification:** All issues created successfully, URLs returned
+**Verification:** All issues created successfully
 
 ---
 
@@ -225,40 +220,36 @@ Assign confidence level (HIGH/MEDIUM/LOW) for each parsed field:
 
 | Avoid | Why | Instead |
 |-------|-----|---------|
-| Creating labels | May not match team conventions | Use existing labels only via semantic matching |
-| Hardcoding labels | Different workspaces have different labels | Fetch dynamically per team |
-| Assuming workspace | API key determines workspace | Document which workspace is active |
-| Skipping preview | User loses control over what's created | Always show table before creating |
-| Guessing project | Wrong categorization | Ask explicitly or make optional |
-| Single-item processing | Inefficient for bulk feedback | Batch parse and create |
+| Creating labels | May not match team conventions | Use existing labels only |
+| Hardcoding labels | Different workspaces have different labels | Fetch dynamically |
+| Asking about repo context | Adds unnecessary prompt | Auto-detect silently |
+| Asking about media URLs | Adds unnecessary prompt | Auto-extract from feedback |
+| Always prompting to confirm | Slows down workflow | Only prompt if LOW confidence |
+| Priority 0 as default | Most feedback deserves attention | Default to 3 (Medium) |
+| Generic titles | Hard to scan/triage | Include specifics from feedback |
 
 ## Verification Checklist
 
 Before completing this skill, verify:
 - [ ] All issues created with valid team assignment
 - [ ] Labels match existing workspace labels (no new labels created)
-- [ ] User confirmed before creation
+- [ ] Confirmation only prompted if LOW confidence items exist
 - [ ] Summary with issue URLs provided
 - [ ] Acceptance criteria formatted as markdown checklist
-- [ ] Priority values are 0-4 (or omitted)
-- [ ] Estimate included in description as note (not passed to API)
-- [ ] Confidence scores assigned to each field (HIGH/MEDIUM/LOW)
+- [ ] Priority values are 1-4 (not 0 unless truly ambiguous)
+- [ ] Estimate included in description
+- [ ] Confidence scores assigned (HIGH/MEDIUM/LOW)
 - [ ] LOW confidence items flagged with [?] in title
-- [ ] Preview table includes Confidence column
-- [ ] Repo context added to descriptions (if user opted in)
-- [ ] Links embedded in description markdown
-- [ ] Auto-detected URLs extracted from feedback text
-- [ ] User-provided URLs merged with auto-detected (no duplicates)
-- [ ] File paths validated and linked (if repo context enabled)
+- [ ] Repo context auto-detected and used (if in git repo)
+- [ ] URLs auto-extracted from feedback text
 
 ## Extension Points
 
 This skill can be extended to:
-1. **Custom parsing rules** - Add domain-specific keyword matching in references
-2. **Template support** - Pre-fill description templates based on issue type
-3. **Assignee inference** - Auto-assign based on feedback source or label
-4. **Duplicate detection** - Check for similar existing issues before creating
-5. **Export preview** - Save parsed issues to CSV before Linear creation
+1. **Duplicate detection** - Check for similar existing issues before creating
+2. **Assignee inference** - Auto-assign based on feedback source or label
+3. **Cycle assignment** - Automatically add to current cycle
+4. **Parent issues** - Group related feedback under epic/parent
 
 ## References
 

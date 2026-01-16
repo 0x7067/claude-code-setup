@@ -17,36 +17,61 @@ The parsing process extracts six key components from each feedback item:
 ### Rules
 - **Format**: Imperative mood (e.g., "Fix crash on upload", not "The app crashes")
 - **Length**: Maximum 80 characters
-- **Clarity**: Should stand alone without context
+- **Specificity**: Include key details from feedback (device, size, action, context)
+- **Clarity**: Should stand alone without reading description
 - **Actionable**: Start with verb when possible
+
+### Specificity Guidelines
+
+**AVOID generic titles:**
+- ❌ "Fix bug"
+- ❌ "Add feature"
+- ❌ "Improve performance"
+- ❌ "Fix crash"
+
+**INCLUDE relevant context from feedback:**
+- ✅ "Fix crash when uploading large images on iPhone 14"
+- ✅ "Add dark mode toggle in settings"
+- ✅ "Improve image loading performance on slow connections"
+- ✅ "Fix crash on login with SSO accounts"
+
+### Context Extraction
+
+Extract and include these details when present in feedback:
+- **Device/Platform**: iPhone 14, Android 12, Chrome
+- **Size/Scale**: large images, bulk operations, many items
+- **Action/Trigger**: when uploading, on login, during save
+- **Condition**: on slow connections, with SSO, when offline
+- **Location**: in settings, on dashboard, in checkout
 
 ### Examples
 
-| Raw Feedback | Extracted Title |
-|--------------|----------------|
-| "The app crashes when I try to upload large images" | Fix crash when uploading large images |
-| "Would love to see dark mode support" | Add dark mode support |
-| "Loading times are really slow on mobile" | Improve loading times on mobile |
-| "Can't find the settings button anywhere" | Make settings button more discoverable |
+| Raw Feedback | Generic (❌) | Specific (✅) |
+|--------------|-------------|---------------|
+| "The app crashes when I try to upload large images on my iPhone 14" | Fix crash on upload | Fix crash when uploading large images on iPhone 14 |
+| "Would love to see dark mode support in the settings" | Add dark mode | Add dark mode toggle in settings |
+| "Loading times are really slow on mobile when there are many items" | Improve loading | Improve loading times with many items on mobile |
+| "Can't find the settings button, looked everywhere" | Fix settings | Make settings button more discoverable |
 
 ### Platform Prefix Convention
 
 When a specific platform is selected during input collection:
 - Prefix the title with `[Platform]`
-- Examples:
+- Specifics still go after the prefix
 
-| Platform | Raw Title | Final Title |
-|----------|-----------|-------------|
-| iOS | Fix crash on upload | [iOS] Fix crash on upload |
-| Android | Add dark mode | [Android] Add dark mode |
-| Web | Improve loading | [Web] Improve loading |
-| Backend/API | Optimize query | [Backend] Optimize query |
-| Multiple/All | Fix auth bug | Fix auth bug (no prefix) |
+| Platform | Feedback | Final Title |
+|----------|----------|-------------|
+| iOS | "Crash when uploading large images" | [iOS] Fix crash when uploading large images |
+| Android | "Need dark mode in settings" | [Android] Add dark mode toggle in settings |
+| Web | "Slow loading with many items" | [Web] Improve loading with many items |
+| Backend/API | "Query timeout on large datasets" | [Backend] Fix query timeout on large datasets |
+| Multiple/All | "Auth fails sometimes" | Fix intermittent authentication failures (no prefix) |
 
 ### Edge Cases
-- **Vague feedback**: "This is broken" → "Fix reported issue [needs details]"
+- **Vague feedback**: "This is broken" → "Fix reported issue [?]" (LOW confidence, flagged)
 - **Multiple issues in one**: Split into separate feedback items first
 - **Feature requests without verbs**: Add appropriate verb (Add, Support, Enable, etc.)
+- **Missing specifics**: Use what's available, mark as MEDIUM confidence if thin
 
 ---
 
@@ -99,38 +124,93 @@ User reported: "App crashes when uploading images over 10MB on iPhone 14"
 
 ### Process
 1. Receive list of available labels from Linear team
-2. Analyze feedback content and extract keywords
-3. Match keywords to label names using semantic similarity
-4. Apply labels with >70% confidence match
-5. Support multiple labels per issue
+2. Analyze feedback using compound signal detection
+3. Consider label descriptions (if available), not just names
+4. Apply domain-aware matching based on repo context
+5. Apply labels with >70% confidence match
+6. Support multiple labels per issue (max 3-4)
 
-### Label Category Patterns
+### Compound Signal Detection
 
-#### Bug Detection
-**Keywords:** crash, error, broken, doesn't work, fails, bug, issue, problem, wrong, incorrect
+Instead of matching single keywords, detect compound patterns that indicate issue type with higher confidence.
 
-**Match to labels like:** Bug, Defect, Issue, Problem, Broken
+#### Bug Compound Signals
+**Strong signals (HIGH confidence):**
+- "keeps crashing when [action]" → Bug
+- "doesn't work anymore" → Bug (regression)
+- "getting error [message]" → Bug
+- "broken since [update/version]" → Bug
+- "[feature] stopped working" → Bug
 
-**Example:**
-- Feedback: "Upload button doesn't work" → Label: "Bug"
+**Moderate signals (MEDIUM confidence):**
+- "doesn't work" → Bug
+- "not working properly" → Bug
+- "something's wrong with" → Bug
 
-#### Feature Detection
-**Keywords:** add, new, would love, wish, could we, want, need, feature, support
+**Examples:**
+| Feedback | Label | Confidence |
+|----------|-------|------------|
+| "App keeps crashing when I upload photos" | Bug | HIGH |
+| "Login doesn't work" | Bug | MEDIUM |
+| "Getting 'network error' on save" | Bug | HIGH |
 
-**Match to labels like:** Feature, Enhancement, New Feature, Feature Request
+#### Feature Compound Signals
+**Strong signals (HIGH confidence):**
+- "would be great if we could [action]" → Feature
+- "can you add [capability]" → Feature
+- "need a way to [action]" → Feature
+- "support for [thing]" → Feature
+- "it would help if [capability]" → Feature
 
-**Example:**
-- Feedback: "Would love dark mode" → Label: "Feature"
+**Moderate signals (MEDIUM confidence):**
+- "would love [thing]" → Feature
+- "wish there was" → Feature
+- "any plans to add" → Feature
 
-#### Improvement Detection
-**Keywords:** better, improve, enhance, slow, faster, optimize, performance, UX
+**Examples:**
+| Feedback | Label | Confidence |
+|----------|-------|------------|
+| "Would be great if we could export to PDF" | Feature | HIGH |
+| "Would love dark mode" | Feature | MEDIUM |
+| "Need a way to bulk delete items" | Feature | HIGH |
 
-**Match to labels like:** Improvement, Enhancement, Performance, UX, Optimization
+#### Improvement Compound Signals
+**Strong signals (HIGH confidence):**
+- "[action] is really slow / takes forever" → Performance
+- "hard to find / can't find [thing]" → UX
+- "confusing how to [action]" → UX
+- "should be easier to [action]" → UX/Improvement
+- "[thing] could be better" → Improvement
 
-**Example:**
-- Feedback: "Loading is too slow" → Label: "Performance" or "Improvement"
+**Moderate signals (MEDIUM confidence):**
+- "slow" (standalone) → Performance
+- "improve [thing]" → Improvement
+- "better [thing]" → Improvement
 
-#### Platform Detection
+**Examples:**
+| Feedback | Label | Confidence |
+|----------|-------|------------|
+| "Saving takes forever, especially with large files" | Performance | HIGH |
+| "Hard to find the export button" | UX | HIGH |
+| "Loading is slow" | Performance | MEDIUM |
+
+### Domain-Aware Matching
+
+Prioritize labels based on detected repo context:
+
+| Repo Type | Prioritize Labels |
+|-----------|-------------------|
+| iOS app (`*.xcodeproj`, `ios/`) | iOS, Mobile, Swift |
+| Android app (`android/`, `build.gradle`) | Android, Mobile, Kotlin |
+| Web app (`package.json` + react/vue) | Web, Frontend |
+| Backend (`Cargo.toml`, `go.mod`, API in name) | Backend, API, Server |
+
+**Usage:**
+- If repo is iOS and feedback mentions generic "mobile" → apply iOS label
+- If repo is backend and feedback mentions "endpoint" → apply API/Backend label
+- Cross-reference repo context with feedback content
+
+### Platform Detection
 **Keywords:** iOS, iPhone, iPad, Android, mobile, web, desktop, backend, API, server
 
 **Match to labels like:** iOS, Android, Mobile, Web, Backend, API
@@ -138,11 +218,13 @@ User reported: "App crashes when uploading images over 10MB on iPhone 14"
 **Example:**
 - Feedback: "Crash on iPhone 14" → Labels: "Bug", "iOS"
 
-#### Domain-Specific Labels
-Look for mentions of specific features or modules and match to corresponding labels:
-- "login", "auth", "signup" → "Authentication"
-- "payment", "checkout" → "Payments"
-- "notification", "push" → "Notifications"
+### Domain-Specific Labels
+Look for mentions of specific features or modules:
+- "login", "auth", "signup", "password" → "Authentication"
+- "payment", "checkout", "billing", "subscription" → "Payments"
+- "notification", "push", "alert" → "Notifications"
+- "profile", "account", "settings" → "Account"
+- "search", "filter", "sort" → "Search"
 
 ### Multi-Label Strategy
 Apply multiple labels when appropriate:
@@ -153,65 +235,87 @@ Apply multiple labels when appropriate:
 ### No Match Handling
 If no label achieves >70% confidence:
 - Leave labels empty
-- User can add manually in preview
-- Log the missed match for future improvement
+- User can add manually during edit (if LOW confidence triggers prompt)
+- Compound signal not found = safer to leave empty than guess
 
 ---
 
 ## 4. Priority Inference
 
 ### Priority Scale
-- **0**: No priority (default)
 - **1**: Urgent
 - **2**: High
-- **3**: Medium
+- **3**: Medium (default)
 - **4**: Low
+
+**Note:** Priority 0 (None) is avoided. Most feedback deserves attention, so default to 3 (Medium) rather than 0.
+
+### Multi-Signal Detection
+
+Priority is determined by combining multiple signals, not just keywords. Start at 3 (Medium) and adjust based on signals:
+
+| Signal Type | +1 Priority (more urgent) | -1 Priority (less urgent) |
+|-------------|---------------------------|---------------------------|
+| **User Impact** | "many users", "everyone", "all users", "team can't" | "sometimes", "rarely", "edge case", "just me" |
+| **Business** | "can't use app", "blocking work", "revenue", "deadline" | "cosmetic", "minor", "nice to have", "eventually" |
+| **Severity** | crash, data loss, security, corruption | typo, color, alignment, spacing |
+| **Tone** | ALL CAPS, multiple !!!, frustrated language | casual suggestion, "when you get a chance" |
 
 ### Detection Rules
 
 #### Priority 1 (Urgent)
-**Keywords:** crash, critical, urgent, ASAP, emergency, down, broken, blocker, can't use
+**Compound signals required** (not just single keywords):
+- Crash + many users: "App crashes for everyone on login"
+- Security issue: "Password visible in plain text"
+- Data loss: "Lost all my saved data"
+- Complete blocker: "Can't use the app at all"
 
-**Context signals:**
-- User reports app is unusable
-- Revenue-impacting issues
-- Security vulnerabilities
-- ALL CAPS or multiple exclamation marks
+**Confidence:** Only assign Priority 1 with HIGH confidence signals
 
-**Example:** "APP CRASHES IMMEDIATELY ON LAUNCH!!!"
+**Examples:**
+- "APP CRASHES IMMEDIATELY ON LAUNCH!!!" → P1 (crash + caps + urgency)
+- "Everyone on the team can't access their accounts" → P1 (many users + blocker)
 
 #### Priority 2 (High)
-**Keywords:** important, soon, blocking, serious, major, significant, impacts many
+**Signals:**
+- Blocking core functionality: "Login doesn't work"
+- Explicit urgency: "Need this ASAP", "blocking our launch"
+- Many users but not complete failure: "Lots of users reporting slow loads"
 
-**Context signals:**
-- Affects core functionality
-- Mentioned deadline or time constraint
-- Many users affected
+**Examples:**
+- "Login doesn't work for new users - blocking onboarding" → P2
+- "API returns 500 errors intermittently" → P2
 
-**Example:** "Login doesn't work for new users - blocking onboarding"
+#### Priority 3 (Medium) - DEFAULT
+**Signals:**
+- Standard bug reports without urgency modifiers
+- Feature requests with clear value
+- Improvements to existing functionality
+- No strong urgency or triviality signals
 
-#### Priority 3 (Medium)
-**Keywords:** should, would be good, normal, standard, regular
-
-**Context signals:**
-- Improvement to existing functionality
-- Minor bugs with workarounds
-- Standard feature requests
-
-**Example:** "Would be nice to have better error messages"
+**Examples:**
+- "Would be nice to have better error messages" → P3
+- "Add dark mode support" → P3
+- "Upload sometimes fails on large files" → P3
 
 #### Priority 4 (Low)
-**Keywords:** minor, eventually, nice to have, small, trivial, cosmetic
+**Signals:**
+- Explicit triviality: "minor", "small", "cosmetic", "polish"
+- Non-functional: typos, colors, spacing, alignment
+- Future/nice-to-have: "eventually", "when you get a chance", "no rush"
 
-**Context signals:**
-- Polish or cosmetic issues
-- Non-urgent improvements
-- Far-future features
+**Examples:**
+- "Minor typo in the footer" → P4
+- "Would be nice to have the button be slightly larger" → P4
+- "No rush but could we change the icon color?" → P4
 
-**Example:** "Minor typo in the footer"
+### Priority Confidence
 
-#### Default (0)
-When no clear urgency signals are present, default to 0 (No priority).
+| Confidence | When to apply |
+|------------|---------------|
+| HIGH | Multiple strong signals present, clear urgency/triviality |
+| MEDIUM | Some signals, reasonable inference |
+| LOW | Defaulted to 3, no clear signals either way |
 
 ---
 
@@ -716,20 +820,20 @@ Assign a confidence level (HIGH/MEDIUM/LOW) to each parsed field to indicate par
 #### Priority Confidence
 
 **HIGH Confidence:**
-- Explicit urgency keyword present
-- Keywords: crash, urgent, ASAP, critical, important, minor
-- Example: "URGENT: Users can't log in!" → Priority 1 (HIGH)
+- Multiple strong signals present
+- Clear urgency compound patterns (crash + many users, security + data)
+- Explicit urgency keywords with context
+- Example: "URGENT: App crashes for everyone on login!" → Priority 1 (HIGH)
 
 **MEDIUM Confidence:**
-- Contextual urgency signals
-- All caps text, multiple exclamation marks
-- Business impact implied
+- Some signals present, reasonable inference
+- Single strong signal or multiple weak signals
 - Example: "Login not working for many users" → Priority 2 (MEDIUM)
 
 **LOW Confidence:**
-- No urgency indicators
-- Defaulted to Priority 0
-- Example: "Would be nice to have dark mode" → Priority 0 (LOW)
+- No clear signals, defaulted to Priority 3
+- Ambiguous feedback with no urgency or triviality indicators
+- Example: "The settings could be better" → Priority 3 (LOW confidence)
 
 #### Estimate Confidence
 
